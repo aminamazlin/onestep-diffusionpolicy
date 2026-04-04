@@ -1,0 +1,59 @@
+# Pre-train Diffusion Policy with EDM noise schedule (Karras et al. 2022).
+#
+# Paper: "One-Step Diffusion Policy: Fast Visuomotor Policies via Diffusion Distillation"
+# Stage 1 of 2: train DP for 1000 epochs → save checkpoint for distillation.
+#
+# EDM is required for the Consistency Policy (CP) baseline comparison (Table 2).
+# For the main DDPM results (Table 1) use configs/train_dp_ddpm.yaml instead.
+#
+# Usage:
+#   python train_dp.py --config configs/train_dp_edm.yaml \
+#       dataset_path=data/robomimic/square_ph.hdf5 \
+#       output_dir=outputs/dp_square_ph_edm
+#
+# Required overrides:
+#   dataset_path   path to Robomimic HDF5 file
+#   output_dir     where to save checkpoints
+
+# ── Required (no defaults) ────────────────────────────────────────────────────
+dataset_path: ???
+output_dir: ???
+
+# ── Architecture (paper defaults, Appendix B) ────────────────────────────────
+horizon: 16
+n_obs_steps: 2
+n_action_steps: 8
+
+# ── Observation keys ─────────────────────────────────────────────────────────
+image_keys:
+  - agentview_image
+  - robot0_eye_in_hand_image
+lowdim_keys: []
+
+# ── Diffusion (EDM / Karras 2022) ────────────────────────────────────────────
+noise_schedule: edm
+num_train_timesteps: 40    # EDM uses ~40 discretised steps for training
+num_inference_steps: 18    # 18 ODE steps = 35 NFE (second-order Heun sampler)
+prediction_type: sample    # x₀-prediction for EDM
+obs_as_global_cond: true
+
+# EDM σ range (Karras et al. Table 1)
+sigma_min: 0.002
+sigma_max: 80.0
+sigma_data: 0.5    # expected action std; used for EDM preconditioning
+
+# ── Training ─────────────────────────────────────────────────────────────────
+# Paper note: 67M-parameter network used for EDM (smaller = slightly better)
+num_epochs: 1000
+batch_size: 64
+num_workers: 4
+lr: 1.0e-4
+weight_decay: 1.0e-6
+
+# ── Vision encoder ───────────────────────────────────────────────────────────
+crop_shape: [76, 76]
+random_crop: true
+
+# ── Logging / checkpointing ───────────────────────────────────────────────────
+log_every: 10
+save_every: 100

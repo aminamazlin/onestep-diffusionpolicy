@@ -1,0 +1,52 @@
+# Pre-train Diffusion Policy with DDPM noise schedule (100 steps).
+#
+# Paper: "One-Step Diffusion Policy: Fast Visuomotor Policies via Diffusion Distillation"
+# Stage 1 of 2: train DP for 1000 epochs → save checkpoint for distillation.
+#
+# Usage:
+#   python train_dp.py --config configs/train_dp_ddpm.yaml \
+#       dataset_path=data/robomimic/square_ph.hdf5 \
+#       output_dir=outputs/dp_square_ph_ddpm
+#
+# Required overrides:
+#   dataset_path   path to Robomimic HDF5 file
+#   output_dir     where to save checkpoints
+
+# ── Required (no defaults) ────────────────────────────────────────────────────
+dataset_path: ???
+output_dir: ???
+
+# ── Architecture (paper defaults, Appendix B) ────────────────────────────────
+horizon: 16          # action chunk size (n=16 in paper)
+n_obs_steps: 2       # number of observation frames fed to policy
+n_action_steps: 8    # number of actions executed per step
+
+# ── Observation keys ─────────────────────────────────────────────────────────
+# Robomimic tasks use up to two cameras; adjust for your dataset.
+image_keys:
+  - agentview_image
+  - robot0_eye_in_hand_image
+lowdim_keys: []     # no explicit low-dim obs for image-based policy
+
+# ── Diffusion (DDPM) ─────────────────────────────────────────────────────────
+noise_schedule: ddpm
+num_train_timesteps: 100   # T = 100 (paper Table 7)
+num_inference_steps: 100   # DDPM: 100 steps; can accelerate with DDIM
+prediction_type: epsilon   # ε-prediction (DDPM convention)
+obs_as_global_cond: true
+
+# ── Training ─────────────────────────────────────────────────────────────────
+num_epochs: 1000     # paper: pre-train for 1000 epochs
+batch_size: 64
+num_workers: 4
+lr: 1.0e-4
+weight_decay: 1.0e-6
+
+# ── Vision encoder ───────────────────────────────────────────────────────────
+# Standard ResNet18 without ImageNet pre-training (paper Section 2.3)
+crop_shape: [76, 76]   # random crop augmentation
+random_crop: true
+
+# ── Logging / checkpointing ───────────────────────────────────────────────────
+log_every: 10
+save_every: 100
