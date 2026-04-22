@@ -2,19 +2,11 @@
 DDPM noise schedule utilities for OneDP distillation.
 
 The paper uses a standard DDPM linear schedule (100 steps) for the
-pre-trained diffusion policy.  During distillation we:
+pre-trained diffusion policy.  
+During distillation:
   - sample diffusion timestep k ~ Uniform[t_min, t_max]   (default [2, 95])
   - forward-diffuse the generated action at that timestep
   - apply the score-difference KL gradient
-
-Notation follows the paper:
-  x^k = α_k * x^0 + σ_k * ε,   ε ~ N(0, I)
-
-where  α_k = sqrt(ᾱ_k)  and  σ_k = sqrt(1 - ᾱ_k)
-with   ᾱ_k = ∏_{i=1}^{k} (1 - β_i).
-
-Weighting:  w(k) = σ_k²  (DreamFusion / Eq. 5 in paper)
-→ score-diff weight = w(k) / σ_k = σ_k
 """
 
 import torch
@@ -47,19 +39,17 @@ class DDPMDistillationScheduler:
         self.t_min = t_min
         self.t_max = t_max
 
-        # ── Linear β schedule ───────────────────────────────────────────────
+        # Linear β schedule 
         betas = torch.linspace(beta_start, beta_end, num_train_timesteps)  # (T,)
         alphas = 1.0 - betas                                                # (T,)
-        alphas_cumprod = torch.cumprod(alphas, dim=0)                       # ᾱ_k (T,)
+        alphas_cumprod = torch.cumprod(alphas, dim=0)                      
 
-        # Paper notation: α_k = sqrt(ᾱ_k),  σ_k = sqrt(1 - ᾱ_k)
+       
         self.register("alpha", alphas_cumprod.sqrt())          # (T,)
         self.register("sigma", (1.0 - alphas_cumprod).sqrt())  # (T,)
         self.register("alphas_cumprod", alphas_cumprod)        # (T,)
 
-    # ------------------------------------------------------------------
-    # Internal helper: store tensors as plain attributes (no nn.Module)
-    # ------------------------------------------------------------------
+  
     def register(self, name: str, tensor: torch.Tensor):
         setattr(self, name, tensor)
 
@@ -69,9 +59,7 @@ class DDPMDistillationScheduler:
         self.alphas_cumprod = self.alphas_cumprod.to(device)
         return self
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+   
 
     def sample_timesteps(self, batch_size: int, device) -> torch.Tensor:
         """Sample k ~ Uniform[t_min, t_max] for a batch."""
