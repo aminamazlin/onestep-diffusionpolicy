@@ -1,8 +1,8 @@
 """
 Thin wrapper around the upstream DiffusionUnetImagePolicy from the
-open-source diffusion_policy library.
+open-source diffusion_policy.
 
-We re-export it here so the rest of the OneDP codebase only needs to
+re-export it here so the rest of the OneDP codebase only needs to
 import from `onedp.models` rather than knowing the upstream package layout.
 The wrapper also adds a `save_checkpoint` / `load_checkpoint` convenience
 and a `encode_obs` helper used by the distillation training loop.
@@ -15,7 +15,7 @@ import torch.nn as nn
 from pathlib import Path
 from typing import Dict
 
-# ── Upstream library imports ──────────────────────────────────────────────────
+
 # diffusion_policy must be on PYTHONPATH (it is a source repo, not a pip package):
 #   git clone https://github.com/real-stanford/diffusion_policy.git
 #   export PYTHONPATH=$PYTHONPATH:/path/to/diffusion_policy
@@ -47,10 +47,8 @@ class DiffusionPolicy(_UpstreamPolicy):
     See upstream source for full documentation.
     """
 
-    # ------------------------------------------------------------------
-    # Observation encoding
-    # ------------------------------------------------------------------
 
+    # Observation encoding
     @torch.no_grad()
     def encode_obs(self, obs_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
         """
@@ -81,10 +79,8 @@ class DiffusionPolicy(_UpstreamPolicy):
             )
         return obs_features
 
-    # ------------------------------------------------------------------
+   
     # Checkpoint helpers
-    # ------------------------------------------------------------------
-
     def save_checkpoint(self, path: str | Path, epoch: int, **extra):
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -106,10 +102,10 @@ class DiffusionPolicy(_UpstreamPolicy):
         return ckpt.get("epoch", 0)
 
 
-# ── re-export upstream building blocks for convenience ───────────────────────
+─
 __all__ = ["DiffusionPolicy", "ConditionalUnet1D", "MultiImageObsEncoder"]
 
 
-# ── local helper (mirrors upstream _apply_transform_to_dict) ─────────────────
+
 def dict_apply(d: dict, fn) -> dict:
     return {k: fn(v) if isinstance(v, torch.Tensor) else v for k, v in d.items()}
