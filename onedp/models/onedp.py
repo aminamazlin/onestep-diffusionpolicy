@@ -1,32 +1,3 @@
-"""
-One-Step Diffusion Policy (OneDP) — distillation model.
-
-Implements Algorithm 1 from:
-  "One-Step Diffusion Policy: Fast Visuomotor Policies via Diffusion Distillation"
-  Wang et al., 2024  (arXiv:2410.21257)
-
-Two variants are supported:
-
-  OneDP-S  (stochastic)
-    - Generator   G_θ(z, O)  maps noise z + obs → clean action  (Eq. 3)
-    - Score net   π_ψ(A|O)   estimates the score of the generator distribution
-    - Training:   update ψ by Eq. 6,  update θ by Eq. 5
-
-  OneDP-D  (deterministic)
-    - Generator   G_θ(O)     maps obs → clean action (z dropped / set to 0)
-    - No score network needed — generator score is computable analytically (Eq. 7)
-    - Training:   update θ by Eq. 8 (simplified loss)
-
-Key design choices (from paper + Appendix B):
-  - Generator and score network are initialised from the pre-trained policy weights
-  - Pre-trained policy π_φ is frozen throughout distillation
-  - Generator uses a fixed diffusion timestep as input embedding:
-      DDPM: t_init = 65   EDM: σ_init = 2.5
-  - Generator LR = 1e-6,  score network LR = 2e-5
-  - Adam with β₁ = 0,  β₂ = 0.999  (GAN-style, allows fast co-evolution)
-  - w(k) = σ_k²  → score-diff weight = σ_k  (DreamFusion weighting)
-"""
-
 from __future__ import annotations
 
 import copy
@@ -38,7 +9,7 @@ import torch.nn as nn
 from onedp.schedulers.ddpm import DDPMDistillationScheduler
 from onedp.schedulers.edm import EDMDistillationScheduler
 
-# We import the upstream ConditionalUnet1D via the diffusion_policy library.
+# import the upstream ConditionalUnet1D via the diffusion_policy
 try:
     from diffusion_policy.model.diffusion.conditional_unet1d import ConditionalUnet1D
 except ImportError as e:
@@ -49,10 +20,8 @@ except ImportError as e:
     ) from e
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Generator
-# ─────────────────────────────────────────────────────────────────────────────
 
+# Generator
 class OneDPGenerator(nn.Module):
     """
     Single-step action generator  G_θ(z, O).
@@ -83,7 +52,7 @@ class OneDPGenerator(nn.Module):
         self.stochastic = stochastic
         self._is_edm = isinstance(scheduler, EDMDistillationScheduler)
 
-    # ------------------------------------------------------------------
+ 
 
     def forward(
         self,
@@ -109,43 +78,40 @@ class OneDPGenerator(nn.Module):
             )
 
         if self._is_edm:
-            # ── EDM branch ────────────────────────────────────────────────
-            # σ_init is the fixed noise level for the generator (paper: 2.5)
+            # EDM branch
             sigma = self.scheduler.generator_sigma(B, obs_features.device)  # (B,)
-
-            # z ~ N(0, I) → scale to the correct noise level N(0, σ_init²)
             x_sigma = z * sigma.view(-1, 1, 1)
 
-            # EDM preconditioning: c_in(σ) · x_σ  (Karras et al. 2022, Table 1)
+            # EDM preconditioning
             sample_in = self.scheduler.precondition_input(x_sigma, sigma)
 
-            # Float timestep embedding: c_noise(σ) = 0.25 · ln(σ)
+            # timestep embeddin
             t_emb = self.scheduler.c_noise(sigma)  # (B,) float
 
-            # Network forward: F = net(c_in · x_σ; c_noise, obs)
+            # Network forward
             F_out = self.noise_pred_net(
                 sample=sample_in,
                 timestep=t_emb,
                 global_cond=obs_features,
             )
 
-            # Decode: D = c_skip · x_σ + c_out · F  (denoised clean action)
+            # Decode
             action = self.scheduler.precondition_output(x_sigma, sigma, F_out)
         else:
-            # ── DDPM branch ───────────────────────────────────────────────
+            # DDPM branch
             # Fixed integer timestep embedding
             t = torch.full(
                 (B,), self.t_init, device=obs_features.device, dtype=torch.long
             )
 
-            # Noise prediction: ε_θ(z, t_init, obs)
+            # Noise prediction
             pred_noise = self.noise_pred_net(
                 sample=z,
                 timestep=t,
                 global_cond=obs_features,
             )  # (B, T_pred, action_dim)
 
-            # Recover clean action: A = (z − σ_{t_init} · ε) / α_{t_init}
+            # Recover clean action
             action = self.scheduler.predict_x0_from_noise(z, t, pred_noise)
 
         return action
@@ -159,9 +125,8 @@ class OneDPGenerator(nn.Module):
             return torch.zeros(batch_size, *action_shape, device=device)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+
 # Full OneDP model  (generator + optional score network + frozen teacher)
-# ─────────────────────────────────────────────────────────────────────────────
 
 class OneDP(nn.Module):
     """
@@ -197,22 +162,19 @@ class OneDP(nn.Module):
         self.variant = variant
         self._is_edm = isinstance(scheduler, EDMDistillationScheduler)
 
-        # ── Frozen pre-trained teacher π_φ ───────────────────────────────
+        # Frozen pre-trained teacher 
         self.pretrained_noise_pred = pretrained_noise_pred
         for p in self.pretrained_noise_pred.parameters():
             p.requires_grad_(False)
         self.pretrained_noise_pred.eval()
 
-        # ── Score network π_ψ (stochastic variant only) ──────────────────
+        # Score network  (stochastic variant only)
         if variant == "stochastic":
             assert score_network is not None, (
                 "score_network must be provided for the stochastic variant"
             )
         self.score_network = score_network  # may be None for deterministic
 
-    # ------------------------------------------------------------------
-    # Factory: initialise generator (and score network) from pre-trained weights
-    # ------------------------------------------------------------------
 
     @classmethod
     def from_pretrained(
@@ -260,9 +222,8 @@ class OneDP(nn.Module):
             score_network=score_net,
         )
 
-    # ------------------------------------------------------------------
+    # 
     # Loss computation
-    # ------------------------------------------------------------------
 
     def compute_loss(
         self,
@@ -286,7 +247,6 @@ class OneDP(nn.Module):
         else:
             return self._loss_deterministic(obs_features, action_shape)
 
-    # ── OneDP-S  (Equations 5 + 6) ────────────────────────────────────────
 
     def _loss_stochastic(
         self,
@@ -296,11 +256,11 @@ class OneDP(nn.Module):
         B = obs_features.shape[0]
         device = obs_features.device
 
-        # ── Step 1: generate clean action from G_θ ─────────────────────
-        z = self.generator.sample_z(B, action_shape, device)     # z ~ N(0,I)
-        A_gen = self.generator(obs_features, z)                   # (B, T, D)
+        # generate clean action from generator
+        z = self.generator.sample_z(B, action_shape, device)    
+        A_gen = self.generator(obs_features, z)                  
 
-        # ── Step 2: sample diffusion timestep / noise level ─────────────
+        # sample diffusion timestep / noise level ─────────────
         if self._is_edm:
             sigma = self.scheduler.sample_sigmas(B, device)      # (B,)
             A_k, noise = self.scheduler.q_sample(A_gen.detach(), sigma)
@@ -308,11 +268,9 @@ class OneDP(nn.Module):
             k = self.scheduler.sample_timesteps(B, device)       # (B,) ints
             A_k, noise = self.scheduler.q_sample(A_gen.detach(), k)
 
-        # ── Step 3: update score network π_ψ  (Eq. 6) ──────────────────
-        #   min_ψ  E[λ(k) · ‖ε_ψ(A^k, k) − noise‖²]
-        #   stop-grad on A_gen so gradients don't flow back to G_θ here
+        #  update score network 
         if self._is_edm:
-            # c_noise(σ) = 0.25 · ln(σ) — keep as float for sinusoidal embedding
+
             t_emb = self.scheduler.c_noise(sigma)
             # EDM: pass preconditioned input c_in(σ) · A^k
             score_in = self.scheduler.precondition_input(A_k, sigma)
@@ -328,13 +286,7 @@ class OneDP(nn.Module):
 
         loss_score_net = (lam * (pred_noise_psi - noise) ** 2).mean()
 
-        # ── Step 4: update generator G_θ  (Eq. 5) ──────────────────────
-        #   gradient = w(k) · (s_{π_φ}(A^k) − s_{π_ψ}(A^k)) · ∇_θ A^k_θ
-        #            = σ_k  · (ε_φ(A^k)    − ε_ψ(A^k))    · ∇_θ A^k_θ
-        #
-        #   Implementation: pseudo-loss so grad flows through A_gen → G_θ
-        #     loss_gen = mean( score_diff.detach() * A_k_with_grad )
-        #   where A_k_with_grad = α_k * A_gen + σ_k * noise  (grad through A_gen)
+        #  update generator 
 
         # Recompute A_k with gradient through A_gen
         if self._is_edm:
@@ -349,18 +301,18 @@ class OneDP(nn.Module):
                     sample=score_in, timestep=t_emb, global_cond=obs_features
                 )
                 eps_psi = pred_noise_psi  # already computed above
-                weight = self.scheduler.distillation_weight(sigma)   # σ
+                weight = self.scheduler.distillation_weight(sigma)  
             else:
                 eps_phi = self.pretrained_noise_pred(
                     sample=A_k, timestep=k, global_cond=obs_features
                 )
                 eps_psi = pred_noise_psi
-                weight = self.scheduler.distillation_weight(k)       # σ_k
+                weight = self.scheduler.distillation_weight(k)       
 
-            # score_diff  =  σ_k · (ε_φ − ε_ψ)   [shape (B,1,1)]
+            # score_diff
             score_diff = weight * (eps_phi - eps_psi)
 
-        # Pseudo-loss: E[score_diff · A^k_θ]  — gives correct gradient for G_θ
+
         loss_gen = (score_diff * A_k_grad).mean()
 
         return {
@@ -369,7 +321,7 @@ class OneDP(nn.Module):
             "loss_total": loss_gen + loss_score_net,
         }
 
-    # ── OneDP-D  (Equation 8) ─────────────────────────────────────────────
+    # OneDP-D  
 
     def _loss_deterministic(
         self,
@@ -379,11 +331,11 @@ class OneDP(nn.Module):
         B = obs_features.shape[0]
         device = obs_features.device
 
-        # ── Step 1: generate clean action (z = 0) ──────────────────────
+        #  generate clean action
         z = self.generator.sample_z(B, action_shape, device)   # zeros
         A_gen = self.generator(obs_features, z)                 # (B, T, D)
 
-        # ── Step 2: sample diffusion timestep / noise ───────────────────
+        # sample diffusion timestep / noise 
         if self._is_edm:
             sigma = self.scheduler.sample_sigmas(B, device)
             A_k_grad, noise = self.scheduler.q_sample(A_gen, sigma)
@@ -391,18 +343,11 @@ class OneDP(nn.Module):
             k = self.scheduler.sample_timesteps(B, device)
             A_k_grad, noise = self.scheduler.q_sample(A_gen, k)
 
-        # ── Step 3: update G_θ  (Eq. 8) ─────────────────────────────────
-        #   gradient = σ_k · (ε_φ(A^k_θ) − noise) · ∇_θ A^k_θ
-        #
-        #   For deterministic G_θ, the generator's score is known analytically:
-        #     s_{G_θ}(A^k) = −ε_k / σ_k      (Eq. 7)
-        #   so the difference  (s_{π_φ} − s_{G_θ}) = (ε_k − ε_φ) / σ_k
-        #   and the full gradient = σ_k² / σ_k · (ε_φ − ε_k) · ∇_θ A^k
-        #                         = σ_k        · (ε_φ − ε_k) · ∇_θ A^k
+    
 
         with torch.no_grad():
             if self._is_edm:
-                # Float noise embedding: c_noise(σ) = 0.25 · ln(σ)
+                # Float noise embedding
                 t_emb = self.scheduler.c_noise(sigma)
                 score_in = self.scheduler.precondition_input(A_k_grad.detach(), sigma)
                 eps_phi = self.pretrained_noise_pred(
@@ -426,10 +371,8 @@ class OneDP(nn.Module):
             "loss_total": loss_gen,
         }
 
-    # ------------------------------------------------------------------
+   
     # Inference
-    # ------------------------------------------------------------------
-
     @torch.no_grad()
     def predict_action(
         self,
@@ -450,10 +393,8 @@ class OneDP(nn.Module):
         z = self.generator.sample_z(B, action_shape, device)
         return self.generator(obs_features, z)
 
-    # ------------------------------------------------------------------
-    # Checkpoint helpers
-    # ------------------------------------------------------------------
 
+    # Checkpoint helpers
     def save_checkpoint(self, path, epoch: int, **extra):
         from pathlib import Path
         path = Path(path)
